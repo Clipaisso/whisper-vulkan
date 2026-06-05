@@ -1,62 +1,59 @@
-name: Build whisper.cpp (Vulkan)
+name: "Build whisper.cpp (Vulkan)"
 
-  on:
-    workflow_dispatch:
-      inputs:
-        whisper_ref:
-          description: "Tag/branch do whisper.cpp"
-          required: true
-          default: "v1.8.6"
+"on":
+  workflow_dispatch:
+    inputs:
+      whisper_ref:
+        description: "Tag/branch do whisper.cpp"
+        required: true
+        default: "v1.8.6"
 
-  permissions:
-    contents: write   # necessário pra publicar a release
+permissions:
+  contents: write
 
-  jobs:
-    build:
-      runs-on: windows-latest
-      steps:
-        - name: Checkout whisper.cpp
-          uses: actions/checkout@v4
-          with:
-            repository: ggml-org/whisper.cpp
-            ref: ${{ inputs.whisper_ref }}
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout whisper.cpp
+        uses: actions/checkout@v4
+        with:
+          repository: ggml-org/whisper.cpp
+          ref: ${{ inputs.whisper_ref }}
 
-        - name: Instalar Vulkan SDK
-          shell: pwsh
-          run: |
-            # Pega a versão mais recente do SDK (se falhar, troque por uma fixa, ex. "1.3.296.0")
-            $ver = (Invoke-RestMethod "https://vulkan.lunarg.com/sdk/latest/windows.txt").Trim()
-            Write-Host "Vulkan SDK $ver"
-            curl.exe -L -o "$env:RUNNER_TEMP\vulkan.exe"
-  "https://sdk.lunarg.com/sdk/download/$ver/windows/VulkanSDK-$ver-Installer.exe"
-            & "$env:RUNNER_TEMP\vulkan.exe" --accept-licenses --default-answer --confirm-command install
-            Add-Content $env:GITHUB_ENV  "VULKAN_SDK=C:\VulkanSDK\$ver"
-            Add-Content $env:GITHUB_PATH "C:\VulkanSDK\$ver\Bin"
+      - name: Instalar Vulkan SDK
+        shell: pwsh
+        run: |
+          $ver = (Invoke-RestMethod "https://vulkan.lunarg.com/sdk/latest/windows.txt").Trim()
+          Write-Host "Vulkan SDK $ver"
+          curl.exe -L -o "$env:RUNNER_TEMP\vulkan.exe" "https://sdk.lunarg.com/sdk/download/$ver/windows/VulkanSDK-$ver-Installer.exe"
+          & "$env:RUNNER_TEMP\vulkan.exe" --accept-licenses --default-answer --confirm-command install
+          Add-Content $env:GITHUB_ENV  "VULKAN_SDK=C:\VulkanSDK\$ver"
+          Add-Content $env:GITHUB_PATH "C:\VulkanSDK\$ver\Bin"
 
-        - name: Configurar
-          shell: pwsh
-          run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DGGML_VULKAN=ON
-  -DWHISPER_BUILD_TESTS=OFF -DWHISPER_BUILD_SERVER=OFF
+      - name: Configurar
+        shell: pwsh
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DGGML_VULKAN=ON -DWHISPER_BUILD_TESTS=OFF -DWHISPER_BUILD_SERVER=OFF
 
-        - name: Compilar
-          shell: pwsh
-          run: cmake --build build --config Release -j
+      - name: Compilar
+        shell: pwsh
+        run: cmake --build build --config Release -j
 
-        - name: Empacotar
-          shell: pwsh
-          run: |
-            $exe = Get-ChildItem -Recurse build -Filter whisper-cli.exe | Select-Object -First 1
-            if (-not $exe) { throw "whisper-cli.exe não encontrado" }
-            $dir = $exe.Directory.FullName
-            New-Item -ItemType Directory -Force pack | Out-Null
-            Copy-Item "$dir\*.exe" pack\ -Force
-            Copy-Item "$dir\*.dll" pack\ -Force
-            Get-ChildItem pack   # log: confira ggml-vulkan.dll na lista
-            Compress-Archive -Path pack\* -DestinationPath whisper-vulkan-bin-x64.zip -Force
+      - name: Empacotar
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem -Recurse build -Filter whisper-cli.exe | Select-Object -First 1
+          if (-not $exe) { throw "whisper-cli.exe nao encontrado no build" }
+          $dir = $exe.Directory.FullName
+          New-Item -ItemType Directory -Force pack | Out-Null
+          Copy-Item "$dir\*.exe" pack\ -Force
+          Copy-Item "$dir\*.dll" pack\ -Force
+          Get-ChildItem pack
+          Compress-Archive -Path pack\* -DestinationPath whisper-vulkan-bin-x64.zip -Force
 
-        - name: Publicar release
-          uses: softprops/action-gh-release@v2
-          with:
-            tag_name: whisper-vulkan-latest
-            name: whisper.cpp Vulkan (latest)
-            files: whisper-vulkan-bin-x64.zip
+      - name: Publicar release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: whisper-vulkan-latest
+          name: "whisper.cpp Vulkan (latest)"
+          files: whisper-vulkan-bin-x64.zip
