@@ -1,0 +1,128 @@
+name: "Build whisper.cpp (Vulkan, Linux)"
+
+# Só a build de Linux. Publica UM arquivo na mesma release do Windows
+# (`whisper-vulkan-latest`), com outro nome, e nunca recompila nem substitui
+# o `whisper-vulkan-bin-x64.zip` do Windows: aquele continua saindo só do
+# `build.yml`.
+
+"on":
+  workflow_dispatch:
+    inputs:
+      whisper_ref:
+        description: "Tag/branch do whisper.cpp (a mesma build do motor em CPU do app)"
+        required: true
+        default: "b5454"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    # 22.04 de propósito: o binário roda em qualquer Linux com glibc 2.35 ou
+    # mais nova (Ubuntu 22.04+, Debian 12+, Fedora 36+...). Compilado num
+    # sistema mais novo, ele recusaria abrir nos mais antigos.
+    runs-on: ubuntu-22.04
+    env:
+      WHISPER_REF: ${{ inputs.whisper_ref }}
+    steps:
+      - name: Checkout whisper.cpp
+        uses: actions/checkout@v7
+        with:
+          repository: ggml-org/whisper.cpp
+          ref: ${{ inputs.whisper_ref }}
+
+      # O SDK da LunarG (a mesma fonte do workflow de Windows), só para
+      # compilar os shaders. Quem usa o programa não precisa dele: só do
+      # driver de vídeo, que traz o libvulkan.so.1.
+      - name: Instalar Vulkan SDK
+        run: |
+          ver="$(curl -fsSL https://vulkan.lunarg.com/sdk/latest/linux.txt | tr -d '[:space:]')"
+          echo "Vulkan SDK $ver"
+          curl -fsSL -o "$RUNNER_TEMP/vulkansdk.tar.xz" "https://sdk.lunarg.com/sdk/download/$ver/linux/vulkansdk-linux-x86_64-$ver.tar.xz"
+          tar -xJf "$RUNNER_TEMP/vulkansdk.tar.xz" -C "$RUNNER_TEMP"
+          sdk="$RUNNER_TEMP/$ver/x86_64"
+          echo "VULKAN_SDK=$sdk" >> "$GITHUB_ENV"
+          echo "$sdk/bin" >> "$GITHUB_PATH"
+          echo "LD_LIBRARY_PATH=$sdk/lib" >> "$GITHUB_ENV"
+
+      # Estático, sem OpenMP: um `whisper-cli` só, que depende apenas do
+      # sistema (libc, libstdc++) e do libvulkan.so.1 do driver.
+      # GGML_NATIVE=OFF para não amarrar ao processador da máquina do GitHub.
+      - name: Compilar
+        run: |
+          cmake -S . -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DGGML_VULKAN=ON \
+            -DGGML_NATIVE=OFF \
+            -DGGML_OPENMP=OFF \
+            -DGGML_CCACHE=OFF \
+            -DWHISPER_BUILD_TESTS=OFF \
+            -DWHISPER_BUILD_SERVER=OFF
+          cmake --build build --config Release -j --target whisper-cli
+
+      - name: Conferir o binário
+        run: |
+          bin=build/bin/whisper-cli
+          file "$bin"
+          ldd "$bin"
+          # Nada de biblioteca que só exista aqui: só o sistema e o Vulkan.
+          extra="$(ldd "$bin" | grep -vE 'linux-vdso|ld-linux|lib(c|m|dl|rt|pthread|gcc_s|stdc\+\+)\.so|libvulkan\.so\.1' || true)"
+          if [ -n "$extra" ]; then
+            echo "::error::o binário depende de biblioteca que não vem com o sistema:"
+            echo "$extra"
+            exit 1
+          fi
+          if ldd "$bin" | grep -q "not found"; then
+            echo "::error::biblioteca não encontrada"
+            exit 1
+          fi
+
+      # Uma transcrição de verdade com as mesmas flags que o Clipaisso passa
+      # (ver src-tauri/src/whisper/runner.rs): primeiro na CPU (-ng), depois no
+      # Vulkan. A máquina do GitHub não tem placa de vídeo, mas o lavapipe do
+      # Mesa (Vulkan em software) dá um dispositivo Vulkan de verdade para o
+      # caminho de GPU rodar.
+      - name: Testar uma transcrição
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y mesa-vulkan-drivers vulkan-tools
+          vulkaninfo --summary || true
+          mkdir -p smoke
+          curl -fsSL -o smoke/tiny.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin
+          curl -fsSL -o smoke/vad.bin https://huggingface.co/ggml-org/whisper-vad/resolve/main/ggml-silero-v5.1.2.bin
+          transcrever() {
+            rm -f smoke/out.json
+            build/bin/whisper-cli -m smoke/tiny.bin -f samples/jfk.wav -of smoke/out -ojf -l en -t 4 -pp \
+              --dtw tiny --vad --vad-model smoke/vad.bin --suppress-nst "$@"
+            grep -q "Americans" smoke/out.json
+          }
+          transcrever -ng
+          echo "CPU: ok"
+          if transcrever 2> smoke/vulkan.log; then
+            grep -iE "vulkan|ggml_vk|using .* backend" smoke/vulkan.log | head -5 || true
+            echo "Vulkan (lavapipe): ok"
+          else
+            cat smoke/vulkan.log | tail -20
+            echo "::warning::a transcrição no Vulkan em software falhou; a de CPU passou. Conferir numa placa de verdade."
+          fi
+
+      - name: Empacotar
+        id: pack
+        run: |
+          mkdir -p pack
+          cp build/bin/whisper-cli pack/
+          cp LICENSE pack/
+          commit="$(git rev-parse HEAD)"
+          printf 'whisper.cpp %s\ncommit %s\nVulkan, Linux x64\n' "$WHISPER_REF" "$commit" > pack/VERSION.txt
+          tar -czf whisper-vulkan-bin-linux-x64.tar.gz -C pack .
+          tar -tzvf whisper-vulkan-bin-linux-x64.tar.gz
+
+      # Só este arquivo. Os outros da release (o .zip do Windows) ficam como
+      # estão: a action só substitui arquivo com o MESMO nome.
+      - name: Publicar na release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: whisper-vulkan-latest
+          name: "whisper.cpp Vulkan (latest)"
+          files: whisper-vulkan-bin-linux-x64.tar.gz
