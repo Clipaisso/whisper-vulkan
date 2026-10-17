@@ -1,6 +1,6 @@
 # whisper-vulkan
 
-Builds de **[whisper.cpp](https://github.com/ggml-org/whisper.cpp)** com o backend **Vulkan** para Windows x64, mantidos pela **[Clipaisso](https://clipaisso.com)** para uso no app **Clipaisso Desktop**.
+Builds de **[whisper.cpp](https://github.com/ggml-org/whisper.cpp)** com o backend **Vulkan** para Windows x64 e Linux x64, mantidos pela **[Clipaisso](https://clipaisso.com)** para uso no app **Clipaisso Desktop**.
 
 > Este repositório **não** modifica o whisper.cpp — apenas o **compila** com o backend Vulkan habilitado e publica o binário pronto numa release, já que o projeto oficial não distribui esse build para Windows.
 
@@ -24,6 +24,19 @@ https://github.com/ClipaIsso/whisper-vulkan/releases/download/whisper-vulkan-lat
 ```
 
 O zip contém o `whisper-cli.exe` e as DLLs de runtime, incluindo a **`ggml-vulkan.dll`** (o backend Vulkan). A `vulkan-1.dll` **não** é incluída de propósito — ela é fornecida pelo driver da GPU no Windows.
+
+## Linux
+
+Além do Windows, a mesma release tem a build de **Linux x64**, publicada por um workflow separado (`.github/workflows/build-linux.yml`), que **nunca recompila nem substitui o zip do Windows**:
+
+```
+https://github.com/ClipaIsso/whisper-vulkan/releases/download/whisper-vulkan-latest/whisper-vulkan-bin-linux-x64.tar.gz
+```
+
+O `.tar.gz` contém o `whisper-cli` (estático, só depende do sistema e do `libvulkan.so.1` do driver de vídeo), o `LICENSE` e um `VERSION.txt` com a tag e o commit do whisper.cpp.
+
+- **Requisito:** driver de vídeo com Vulkan (Mesa para AMD e Intel, o driver da NVIDIA) e glibc 2.35 ou mais nova (Ubuntu 22.04+, Debian 12+, Fedora 36+). Processador x86-64 com AVX2 (Intel de 2013 em diante, AMD de 2015 em diante).
+- **Como (re)gerar:** aba **Actions** → **"Build whisper.cpp (Vulkan, Linux)"** → **Run workflow**, com a tag do whisper.cpp em `whisper_ref` (ex.: `b5454`). O workflow testa uma transcrição de verdade na CPU e no Vulkan (em software, o lavapipe do Mesa, porque a máquina do GitHub não tem placa) antes de publicar.
 
 ## Requisito de runtime
 
