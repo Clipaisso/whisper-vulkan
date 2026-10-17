@@ -32,10 +32,20 @@ jobs:
           ref: ${{ inputs.whisper_ref }}
 
       # O SDK da LunarG (a mesma fonte do workflow de Windows), só para
-      # compilar os shaders. Quem usa o programa não precisa dele: só do
-      # driver de vídeo, que traz o libvulkan.so.1.
+      # compilar os shaders (glslc) e os cabeçalhos. Quem usa o programa não
+      # precisa dele: só do driver de vídeo, que traz o libvulkan.so.1.
+      #
+      # A biblioteca para ligar vem do próprio Ubuntu (libvulkan-dev): desde
+      # a 1.4.363 o SDK guarda o libvulkan em `lib/VulkanLoader/lib/`, fora
+      # de onde o CMake procura, e a configuração falhava com "Could NOT find
+      # Vulkan (missing: Vulkan_LIBRARY)". Com a do sistema não depende de
+      # onde a LunarG resolve pôr o arquivo. O binário pede só
+      # `libvulkan.so.1`, que é o mesmo em qualquer Linux.
       - name: Instalar Vulkan SDK
         run: |
+          sudo apt-get update
+          sudo apt-get install -y libvulkan-dev
+          test -f /usr/lib/x86_64-linux-gnu/libvulkan.so
           ver="$(curl -fsSL https://vulkan.lunarg.com/sdk/latest/linux.txt | tr -d '[:space:]')"
           echo "Vulkan SDK $ver"
           curl -fsSL -o "$RUNNER_TEMP/vulkansdk.tar.xz" "https://sdk.lunarg.com/sdk/download/$ver/linux/vulkansdk-linux-x86_64-$ver.tar.xz"
@@ -54,6 +64,7 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release \
             -DBUILD_SHARED_LIBS=OFF \
             -DGGML_VULKAN=ON \
+            -DVulkan_LIBRARY=/usr/lib/x86_64-linux-gnu/libvulkan.so \
             -DGGML_NATIVE=OFF \
             -DGGML_OPENMP=OFF \
             -DGGML_CCACHE=OFF \
@@ -85,7 +96,6 @@ jobs:
       # caminho de GPU rodar.
       - name: Testar uma transcrição
         run: |
-          sudo apt-get update
           sudo apt-get install -y mesa-vulkan-drivers vulkan-tools
           vulkaninfo --summary || true
           mkdir -p smoke
